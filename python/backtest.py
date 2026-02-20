@@ -204,18 +204,39 @@ def main() -> None:
                 # If SL and TP levels are both inside the same bar range, we choose a conservative ordering:
                 # SL first. This is pessimistic but avoids overestimating performance.
 
+                # Gap-aware, conservative fills for a long position:
+                # - If the market opens beyond a level, fill at open (better/worse than the level).
+                # - Otherwise, if the level is touched intrabar, fill at the level.
+
                 # SL hit?
+                if b.o <= pos.sl:
+                    # gap through SL -> worst case fill at open
+                    pos.exit_time = b.t
+                    pos.exit_price = b.o
+                    r_sl = (pos.exit_price - pos.entry_price) / risk
+                    pos.pnl_r = pos.realized_r + pos.remaining_size * r_sl
+                    trades.append(pos)
+                    pos = None
+                    continue
                 if b.l <= pos.sl:
                     pos.exit_time = b.t
                     pos.exit_price = pos.sl
-                    r_sl = (pos.exit_price - pos.entry_price) / risk  # should be -1.0
-                    # if TP1 was hit earlier, we only lose on the remaining size
+                    r_sl = (pos.exit_price - pos.entry_price) / risk  # ~ -1.0
                     pos.pnl_r = pos.realized_r + pos.remaining_size * r_sl
                     trades.append(pos)
                     pos = None
                     continue
 
                 # TP2 hit? (full close)
+                if b.o >= pos.tp2:
+                    # gap beyond TP2 -> fill at open (best case)
+                    pos.exit_time = b.t
+                    pos.exit_price = b.o
+                    r_tp2 = (pos.exit_price - pos.entry_price) / risk
+                    pos.pnl_r = pos.realized_r + pos.remaining_size * r_tp2
+                    trades.append(pos)
+                    pos = None
+                    continue
                 if b.h >= pos.tp2:
                     pos.exit_time = b.t
                     pos.exit_price = pos.tp2
@@ -226,14 +247,18 @@ def main() -> None:
                     continue
 
                 # TP1 hit? (partial close)
-                if (not pos.hit_tp1) and b.h >= pos.tp1:
-                    pos.hit_tp1 = True
-                    r_tp1 = (pos.tp1 - pos.entry_price) / risk
-                    # realize 50% at TP1
-                    pos.realized_r += 0.5 * r_tp1
-                    pos.remaining_size -= 0.5
-                    if pos.remaining_size < 0:
-                        pos.remaining_size = 0.0
+                if not pos.hit_tp1:
+                    if b.o >= pos.tp1:
+                        # gap beyond TP1 -> realize at open
+                        pos.hit_tp1 = True
+                        r_tp1 = (b.o - pos.entry_price) / risk
+                        pos.realized_r += 0.5 * r_tp1
+                        pos.remaining_size = max(0.0, pos.remaining_size - 0.5)
+                    elif b.h >= pos.tp1:
+                        pos.hit_tp1 = True
+                        r_tp1 = (pos.tp1 - pos.entry_price) / risk
+                        pos.realized_r += 0.5 * r_tp1
+                        pos.remaining_size = max(0.0, pos.remaining_size - 0.5)
 
         # generate new signal at bar i (use bar i close, enter at bar i+1 open)
         if pos is not None:
