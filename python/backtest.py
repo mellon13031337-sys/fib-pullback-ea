@@ -65,25 +65,51 @@ def parse_time(x: str) -> dt.datetime:
 
 def read_csv(path: str) -> list[Bar]:
     p = Path(path)
+
+    def norm_key(k: str) -> str:
+        # MT5 export headers sometimes look like <DATE> or <OPEN>
+        k = k.strip()
+        if k.startswith("<") and k.endswith(">"):
+            k = k[1:-1]
+        return k.strip().lower()
+
     with p.open("r", encoding="utf-8", newline="") as f:
-        r = csv.DictReader(f)
-        # normalize keys
+        # sniff delimiter (comma/semicolon/tab)
+        sample = f.read(4096)
+        f.seek(0)
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters=[",", ";", "\t"])
+        except csv.Error:
+            dialect = csv.excel
+            dialect.delimiter = ","
+
+        raw = csv.DictReader(f, dialect=dialect)
+
         def g(row, *names):
+            # build normalized view once
+            nrow = {norm_key(k): v for k, v in row.items() if k is not None}
             for n in names:
-                if n in row and row[n] not in (None, ""):
-                    return row[n]
-                if n.lower() in row and row[n.lower()] not in (None, ""):
-                    return row[n.lower()]
+                nk = norm_key(n)
+                if nk in nrow and nrow[nk] not in (None, ""):
+                    return nrow[nk]
             raise KeyError(names)
 
         bars: list[Bar] = []
-        for row in r:
-            t = parse_time(g(row, "time", "Time", "datetime", "Date"))
-            o = float(g(row, "open", "Open"))
-            h = float(g(row, "high", "High"))
-            l = float(g(row, "low", "Low"))
-            c = float(g(row, "close", "Close"))
+        for row in raw:
+            # time can be single column (time/datetime) or split DATE+TIME (MT5 export)
+            nrow = {norm_key(k): v for k, v in row.items() if k is not None}
+            if "date" in nrow and "time" in nrow and nrow.get("date") not in (None, ""):
+                t_raw = f"{nrow['date']} {nrow['time']}"
+            else:
+                t_raw = g(row, "time", "datetime", "date")
+
+            t = parse_time(t_raw)
+            o = float(g(row, "open"))
+            h = float(g(row, "high"))
+            l = float(g(row, "low"))
+            c = float(g(row, "close"))
             bars.append(Bar(t=t, o=o, h=h, l=l, c=c))
+
     bars.sort(key=lambda b: b.t)
     return bars
 
