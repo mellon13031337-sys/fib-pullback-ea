@@ -163,7 +163,11 @@ class Trade:
     exit_time: Optional[dt.datetime] = None
     exit_price: Optional[float] = None
     pnl_r: Optional[float] = None
+
+    # bookkeeping
     hit_tp1: bool = False
+    realized_r: float = 0.0  # realized PnL (in R) from partial exits
+    remaining_size: float = 1.0  # 1.0 = full size; after TP1 -> 0.5
 
 
 def main() -> None:
@@ -196,33 +200,40 @@ def main() -> None:
                 # invalid
                 pos = None
             else:
+                # NOTE on intrabar ambiguity:
+                # If SL and TP levels are both inside the same bar range, we choose a conservative ordering:
+                # SL first. This is pessimistic but avoids overestimating performance.
+
                 # SL hit?
                 if b.l <= pos.sl:
                     pos.exit_time = b.t
                     pos.exit_price = pos.sl
-                    pos.pnl_r = (pos.exit_price - pos.entry_price) / risk
+                    r_sl = (pos.exit_price - pos.entry_price) / risk  # should be -1.0
+                    # if TP1 was hit earlier, we only lose on the remaining size
+                    pos.pnl_r = pos.realized_r + pos.remaining_size * r_sl
                     trades.append(pos)
                     pos = None
                     continue
 
-                # TP1 hit?
-                if (not pos.hit_tp1) and b.h >= pos.tp1:
-                    pos.hit_tp1 = True
-
-                # TP2 hit?
+                # TP2 hit? (full close)
                 if b.h >= pos.tp2:
                     pos.exit_time = b.t
                     pos.exit_price = pos.tp2
-                    # PnL in R: 50% at tp1 + 50% at tp2 (if tp1 hit), else just tp2
-                    r1 = (pos.tp1 - pos.entry_price) / risk
-                    r2 = (pos.tp2 - pos.entry_price) / risk
-                    if pos.hit_tp1:
-                        pos.pnl_r = 0.5 * r1 + 0.5 * r2
-                    else:
-                        pos.pnl_r = r2
+                    r_tp2 = (pos.exit_price - pos.entry_price) / risk
+                    pos.pnl_r = pos.realized_r + pos.remaining_size * r_tp2
                     trades.append(pos)
                     pos = None
                     continue
+
+                # TP1 hit? (partial close)
+                if (not pos.hit_tp1) and b.h >= pos.tp1:
+                    pos.hit_tp1 = True
+                    r_tp1 = (pos.tp1 - pos.entry_price) / risk
+                    # realize 50% at TP1
+                    pos.realized_r += 0.5 * r_tp1
+                    pos.remaining_size -= 0.5
+                    if pos.remaining_size < 0:
+                        pos.remaining_size = 0.0
 
         # generate new signal at bar i (use bar i close, enter at bar i+1 open)
         if pos is not None:
