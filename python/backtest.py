@@ -134,6 +134,34 @@ def ema(values: list[float], period: int) -> list[Optional[float]]:
     return out
 
 
+def atr(bars: list[Bar], period: int = 14) -> list[Optional[float]]:
+    """Average True Range (Wilder smoothing)."""
+    out: list[Optional[float]] = [None] * len(bars)
+    if period <= 0 or len(bars) < period + 1:
+        return out
+
+    def tr(i: int) -> float:
+        prev_c = bars[i - 1].c
+        return max(
+            bars[i].h - bars[i].l,
+            abs(bars[i].h - prev_c),
+            abs(bars[i].l - prev_c),
+        )
+
+    # seed ATR at index=period with SMA of TR(1..period)
+    seed = 0.0
+    for i in range(1, period + 1):
+        seed += tr(i)
+    atr_val = seed / period
+    out[period] = atr_val
+
+    for i in range(period + 1, len(bars)):
+        atr_val = (atr_val * (period - 1) + tr(i)) / period
+        out[i] = atr_val
+
+    return out
+
+
 def lowest_low(bars: list[Bar], start: int, end: int) -> tuple[float, int]:
     # inclusive start, inclusive end
     lo = float("inf")
@@ -178,6 +206,8 @@ class Trade:
     confirm_strength: Optional[float] = None
     ema200: Optional[float] = None
     ema50: Optional[float] = None
+    atr14: Optional[float] = None
+    atr20: Optional[float] = None
 
 
 def main() -> None:
@@ -200,6 +230,8 @@ def main() -> None:
     closes = [b.c for b in bars]
     ema200 = ema(closes, args.ema200)
     ema50 = ema(closes, 50)
+    atr14 = atr(bars, 14)
+    atr20 = atr(bars, 20)
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -355,6 +387,8 @@ def main() -> None:
             confirm_strength=bars[i].c - fib382,
             ema200=float(ema200[i]) if ema200[i] is not None else None,
             ema50=float(ema50[i]) if ema50[i] is not None else None,
+            atr14=atr14[i] if i < len(atr14) else None,
+            atr20=atr20[i] if i < len(atr20) else None,
         )
 
     # If position is still open at end of data, close it at the last bar close.
@@ -397,6 +431,17 @@ def main() -> None:
             "confirm_strength",
             "ema200",
             "ema50",
+            # ATR features (computed at signal bar)
+            "atr14",
+            "atr20",
+            "risk_atr14",
+            "risk_atr20",
+            "confirm_atr14",
+            "confirm_atr20",
+            "zone_depth_atr14",
+            "zone_depth_atr20",
+            "swing_range_atr14",
+            "swing_range_atr20",
         ])
         for t in trades:
             # optional features may not exist for older rows; compute what we can.
@@ -412,6 +457,15 @@ def main() -> None:
             confirm_strength = getattr(t, "confirm_strength", None)
             ema200_v = getattr(t, "ema200", None)
             ema50_v = getattr(t, "ema50", None)
+
+            atr14_v = getattr(t, "atr14", None)
+            atr20_v = getattr(t, "atr20", None)
+            swing_range = (swing_hi - swing_lo) if (swing_hi is not None and swing_lo is not None) else None
+
+            def div(a: Optional[float], b: Optional[float]) -> Optional[float]:
+                if a is None or b is None or b == 0:
+                    return None
+                return a / b
 
             w.writerow([
                 args.symbol,
@@ -435,6 +489,16 @@ def main() -> None:
                 f"{confirm_strength:.6f}" if confirm_strength is not None else "",
                 f"{ema200_v:.6f}" if ema200_v is not None else "",
                 f"{ema50_v:.6f}" if ema50_v is not None else "",
+                f"{atr14_v:.6f}" if atr14_v is not None else "",
+                f"{atr20_v:.6f}" if atr20_v is not None else "",
+                f"{div(risk, atr14_v):.6f}" if div(risk, atr14_v) is not None else "",
+                f"{div(risk, atr20_v):.6f}" if div(risk, atr20_v) is not None else "",
+                f"{div(confirm_strength, atr14_v):.6f}" if div(confirm_strength, atr14_v) is not None else "",
+                f"{div(confirm_strength, atr20_v):.6f}" if div(confirm_strength, atr20_v) is not None else "",
+                f"{div(zone_depth, atr14_v):.6f}" if div(zone_depth, atr14_v) is not None else "",
+                f"{div(zone_depth, atr20_v):.6f}" if div(zone_depth, atr20_v) is not None else "",
+                f"{div(swing_range, atr14_v):.6f}" if div(swing_range, atr14_v) is not None else "",
+                f"{div(swing_range, atr20_v):.6f}" if div(swing_range, atr20_v) is not None else "",
             ])
 
     # summary
