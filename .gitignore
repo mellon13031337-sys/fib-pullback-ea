@@ -6,6 +6,7 @@ out_*/
 sensitivity_*.csv
 sensitivity_*.txt
 m5_validation_*/
+sensitivity_tp1first_*/
 
 *.pyc
 __pycache__/
