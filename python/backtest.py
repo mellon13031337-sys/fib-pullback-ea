@@ -177,6 +177,12 @@ def main() -> None:
     ap.add_argument("--lookback", type=int, default=20)
     ap.add_argument("--ema200", type=int, default=200)
     ap.add_argument("--ema50_filter", action="store_true")
+    ap.add_argument(
+        "--intrabar",
+        choices=["conservative", "ohlc"],
+        default="conservative",
+        help="How to resolve SL/TP hits within a bar: conservative (SL-first) or ohlc path model.",
+    )
     ap.add_argument("--out", default="out")
     args = ap.parse_args()
 
@@ -197,68 +203,89 @@ def main() -> None:
             b = bars[i]
             risk = pos.entry_price - pos.sl
             if risk <= 0:
-                # invalid
                 pos = None
             else:
-                # NOTE on intrabar ambiguity:
-                # If SL and TP levels are both inside the same bar range, we choose a conservative ordering:
-                # SL first. This is pessimistic but avoids overestimating performance.
-
-                # Gap-aware, conservative fills for a long position:
-                # - If the market opens beyond a level, fill at open (better/worse than the level).
-                # - Otherwise, if the level is touched intrabar, fill at the level.
-
-                # SL hit?
-                if b.o <= pos.sl:
-                    # gap through SL -> worst case fill at open
+                def close_trade(fill_price: float) -> None:
+                    nonlocal pos
                     pos.exit_time = b.t
-                    pos.exit_price = b.o
-                    r_sl = (pos.exit_price - pos.entry_price) / risk
-                    pos.pnl_r = pos.realized_r + pos.remaining_size * r_sl
+                    pos.exit_price = fill_price
+                    r = (fill_price - pos.entry_price) / risk
+                    pos.pnl_r = pos.realized_r + pos.remaining_size * r
                     trades.append(pos)
                     pos = None
-                    continue
-                if b.l <= pos.sl:
-                    pos.exit_time = b.t
-                    pos.exit_price = pos.sl
-                    r_sl = (pos.exit_price - pos.entry_price) / risk  # ~ -1.0
-                    pos.pnl_r = pos.realized_r + pos.remaining_size * r_sl
-                    trades.append(pos)
-                    pos = None
-                    continue
 
-                # TP2 hit? (full close)
-                if b.o >= pos.tp2:
-                    # gap beyond TP2 -> fill at open (best case)
-                    pos.exit_time = b.t
-                    pos.exit_price = b.o
-                    r_tp2 = (pos.exit_price - pos.entry_price) / risk
-                    pos.pnl_r = pos.realized_r + pos.remaining_size * r_tp2
-                    trades.append(pos)
-                    pos = None
-                    continue
-                if b.h >= pos.tp2:
-                    pos.exit_time = b.t
-                    pos.exit_price = pos.tp2
-                    r_tp2 = (pos.exit_price - pos.entry_price) / risk
-                    pos.pnl_r = pos.realized_r + pos.remaining_size * r_tp2
-                    trades.append(pos)
-                    pos = None
-                    continue
+                def hit_tp1(fill_price: float) -> None:
+                    # realize 50% at TP1
+                    if pos is None or pos.hit_tp1:
+                        return
+                    pos.hit_tp1 = True
+                    r = (fill_price - pos.entry_price) / risk
+                    pos.realized_r += 0.5 * r
+                    pos.remaining_size = max(0.0, pos.remaining_size - 0.5)
 
-                # TP1 hit? (partial close)
-                if not pos.hit_tp1:
-                    if b.o >= pos.tp1:
-                        # gap beyond TP1 -> realize at open
-                        pos.hit_tp1 = True
-                        r_tp1 = (b.o - pos.entry_price) / risk
-                        pos.realized_r += 0.5 * r_tp1
-                        pos.remaining_size = max(0.0, pos.remaining_size - 0.5)
-                    elif b.h >= pos.tp1:
-                        pos.hit_tp1 = True
-                        r_tp1 = (pos.tp1 - pos.entry_price) / risk
-                        pos.realized_r += 0.5 * r_tp1
-                        pos.remaining_size = max(0.0, pos.remaining_size - 0.5)
+                if args.intrabar == "conservative":
+                    # Conservative, gap-aware fills.
+                    # Ambiguity handling: SL checks first.
+
+                    # SL
+                    if b.o <= pos.sl:
+                        close_trade(b.o)
+                        continue
+                    if b.l <= pos.sl:
+                        close_trade(pos.sl)
+                        continue
+
+                    # TP2
+                    if b.o >= pos.tp2:
+                        close_trade(b.o)
+                        continue
+                    if b.h >= pos.tp2:
+                        close_trade(pos.tp2)
+                        continue
+
+                    # TP1
+                    if not pos.hit_tp1:
+                        if b.o >= pos.tp1:
+                            hit_tp1(b.o)
+                        elif b.h >= pos.tp1:
+                            hit_tp1(pos.tp1)
+
+                else:
+                    # OHLC path model (no ticks): approximate intrabar price path.
+                    # If close >= open: O -> L -> H -> C
+                    # else:            O -> H -> L -> C
+                    path = [b.o]
+                    if b.c >= b.o:
+                        path += [b.l, b.h, b.c]
+                    else:
+                        path += [b.h, b.l, b.c]
+
+                    def crosses(a: float, bb: float, level: float) -> bool:
+                        lo = a if a < bb else bb
+                        hi = bb if a < bb else a
+                        return lo <= level <= hi
+
+                    # Walk segments in order and trigger events.
+                    for a, bb in zip(path, path[1:]):
+                        if pos is None:
+                            break
+
+                        # If segment moves down, SL can be hit (long).
+                        if bb < a:
+                            if crosses(a, bb, pos.sl):
+                                # fill at SL (not at bb) because it's a stop level touch.
+                                close_trade(pos.sl)
+                                break
+                        else:
+                            # segment moves up: TP2 then TP1 ordering within the segment depends on which is closer.
+                            # TP2 full close
+                            if crosses(a, bb, pos.tp2):
+                                close_trade(pos.tp2)
+                                break
+                            # TP1 partial
+                            if (not pos.hit_tp1) and crosses(a, bb, pos.tp1):
+                                hit_tp1(pos.tp1)
+                                # keep going in case TP2 is reached later in path
 
         # generate new signal at bar i (use bar i close, enter at bar i+1 open)
         if pos is not None:
