@@ -304,6 +304,19 @@ def main() -> None:
 
         pos = Trade(entry_time=entry_bar.t, entry_price=entry, sl=sl, tp1=tp1, tp2=tp2)
 
+    # If position is still open at end of data, close it at the last bar close.
+    # This avoids silently dropping open trades and makes reporting consistent.
+    if pos is not None:
+        b = bars[-1]
+        risk = pos.entry_price - pos.sl
+        if risk > 0:
+            pos.exit_time = b.t
+            pos.exit_price = b.c
+            r_eod = (pos.exit_price - pos.entry_price) / risk
+            pos.pnl_r = pos.realized_r + pos.remaining_size * r_eod
+            trades.append(pos)
+        pos = None
+
     # export
     out_csv = out_dir / "trades.csv"
     with out_csv.open("w", encoding="utf-8", newline="") as f:
