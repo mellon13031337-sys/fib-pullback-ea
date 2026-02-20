@@ -169,6 +169,16 @@ class Trade:
     realized_r: float = 0.0  # realized PnL (in R) from partial exits
     remaining_size: float = 1.0  # 1.0 = full size; after TP1 -> 0.5
 
+    # entry features (for analysis)
+    swing_lo: Optional[float] = None
+    swing_hi: Optional[float] = None
+    fib382: Optional[float] = None
+    fib618: Optional[float] = None
+    zone_depth: Optional[float] = None
+    confirm_strength: Optional[float] = None
+    ema200: Optional[float] = None
+    ema50: Optional[float] = None
+
 
 def main() -> None:
     ap = argparse.ArgumentParser()
@@ -331,7 +341,21 @@ def main() -> None:
         if not (sl < entry < tp2):
             continue
 
-        pos = Trade(entry_time=entry_bar.t, entry_price=entry, sl=sl, tp1=tp1, tp2=tp2)
+        pos = Trade(
+            entry_time=entry_bar.t,
+            entry_price=entry,
+            sl=sl,
+            tp1=tp1,
+            tp2=tp2,
+            swing_lo=lo,
+            swing_hi=hi,
+            fib382=fib382,
+            fib618=fib618,
+            zone_depth=max(0.0, fib618 - bars[i].l),
+            confirm_strength=bars[i].c - fib382,
+            ema200=float(ema200[i]) if ema200[i] is not None else None,
+            ema50=float(ema50[i]) if ema50[i] is not None else None,
+        )
 
     # If position is still open at end of data, close it at the last bar close.
     # This avoids silently dropping open trades and makes reporting consistent.
@@ -350,8 +374,45 @@ def main() -> None:
     out_csv = out_dir / "trades.csv"
     with out_csv.open("w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["symbol", "entry_time", "entry", "sl", "tp1", "tp2", "exit_time", "exit", "pnl_r", "hit_tp1"])
+        w.writerow([
+            "symbol",
+            "entry_time",
+            "entry",
+            "sl",
+            "tp1",
+            "tp2",
+            "exit_time",
+            "exit",
+            "pnl_r",
+            "hit_tp1",
+            # features at entry
+            "risk",
+            "r_tp1",
+            "r_tp2",
+            "swing_lo",
+            "swing_hi",
+            "fib382",
+            "fib618",
+            "zone_depth",
+            "confirm_strength",
+            "ema200",
+            "ema50",
+        ])
         for t in trades:
+            # optional features may not exist for older rows; compute what we can.
+            risk = t.entry_price - t.sl
+            r_tp1 = (t.tp1 - t.entry_price) / risk if risk > 0 else 0.0
+            r_tp2 = (t.tp2 - t.entry_price) / risk if risk > 0 else 0.0
+
+            swing_lo = getattr(t, "swing_lo", None)
+            swing_hi = getattr(t, "swing_hi", None)
+            fib382 = getattr(t, "fib382", None)
+            fib618 = getattr(t, "fib618", None)
+            zone_depth = getattr(t, "zone_depth", None)
+            confirm_strength = getattr(t, "confirm_strength", None)
+            ema200_v = getattr(t, "ema200", None)
+            ema50_v = getattr(t, "ema50", None)
+
             w.writerow([
                 args.symbol,
                 t.entry_time.isoformat(sep=" "),
@@ -363,6 +424,17 @@ def main() -> None:
                 f"{t.exit_price:.6f}" if t.exit_price else "",
                 f"{t.pnl_r:.4f}" if t.pnl_r is not None else "",
                 int(t.hit_tp1),
+                f"{risk:.6f}",
+                f"{r_tp1:.4f}",
+                f"{r_tp2:.4f}",
+                f"{swing_lo:.6f}" if swing_lo is not None else "",
+                f"{swing_hi:.6f}" if swing_hi is not None else "",
+                f"{fib382:.6f}" if fib382 is not None else "",
+                f"{fib618:.6f}" if fib618 is not None else "",
+                f"{zone_depth:.6f}" if zone_depth is not None else "",
+                f"{confirm_strength:.6f}" if confirm_strength is not None else "",
+                f"{ema200_v:.6f}" if ema200_v is not None else "",
+                f"{ema50_v:.6f}" if ema50_v is not None else "",
             ])
 
     # summary
