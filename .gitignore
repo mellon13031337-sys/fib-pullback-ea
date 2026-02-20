@@ -8,6 +8,7 @@ sensitivity_*.txt
 m5_validation_*/
 sensitivity_tp1first_*/
 out_batch_*_feat/
+out_batch_*_atr/
 
 *.pyc
 __pycache__/
