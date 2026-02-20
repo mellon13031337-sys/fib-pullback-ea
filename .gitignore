@@ -1,4 +1,11 @@
 out/
 data/
+# local analysis artifacts / ad-hoc outputs
+out_*/
+*_report_*.csv
+sensitivity_*.csv
+sensitivity_*.txt
+m5_validation_*/
+
 *.pyc
 __pycache__/

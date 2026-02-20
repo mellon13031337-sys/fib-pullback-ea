@@ -235,6 +235,14 @@ def main() -> None:
                         close_trade(pos.sl)
                         continue
 
+                    # TP1 (partial) should be evaluated before TP2 within the same bar
+                    # because price must pass TP1 on the way to TP2 (unless it gaps).
+                    if not pos.hit_tp1:
+                        if b.o >= pos.tp1 and b.o < pos.tp2:
+                            hit_tp1(b.o)
+                        elif b.h >= pos.tp1:
+                            hit_tp1(pos.tp1)
+
                     # TP2
                     if b.o >= pos.tp2:
                         close_trade(b.o)
@@ -242,13 +250,6 @@ def main() -> None:
                     if b.h >= pos.tp2:
                         close_trade(pos.tp2)
                         continue
-
-                    # TP1
-                    if not pos.hit_tp1:
-                        if b.o >= pos.tp1:
-                            hit_tp1(b.o)
-                        elif b.h >= pos.tp1:
-                            hit_tp1(pos.tp1)
 
                 else:
                     # OHLC path model (no ticks): approximate intrabar price path.
@@ -278,14 +279,15 @@ def main() -> None:
                                 break
                         else:
                             # segment moves up: TP2 then TP1 ordering within the segment depends on which is closer.
+                            # TP1 partial (if hit) should execute before TP2 as price moves up.
+                            if (not pos.hit_tp1) and crosses(a, bb, pos.tp1):
+                                hit_tp1(pos.tp1)
+                                # keep going; TP2 may be reached later in the same segment/path
+
                             # TP2 full close
                             if crosses(a, bb, pos.tp2):
                                 close_trade(pos.tp2)
                                 break
-                            # TP1 partial
-                            if (not pos.hit_tp1) and crosses(a, bb, pos.tp1):
-                                hit_tp1(pos.tp1)
-                                # keep going in case TP2 is reached later in path
 
         # generate new signal at bar i (use bar i close, enter at bar i+1 open)
         if pos is not None:
