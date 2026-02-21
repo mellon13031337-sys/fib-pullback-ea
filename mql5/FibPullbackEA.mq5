@@ -211,10 +211,12 @@ void ManagePosition()
    
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double posVol = PositionGetDouble(POSITION_VOLUME);
-   double posEntry = PositionGetDouble(POSITION_PRICE_OPEN);
    double posSL = PositionGetDouble(POSITION_SL);
    double posTP = PositionGetDouble(POSITION_TP);
-   
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   double minStopDist = (double)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * point;
+
    // Check if TP1 hit (partial close)
    if(!tp1Hit && currentTP1 > 0 && bid >= currentTP1)
    {
@@ -228,22 +230,31 @@ void ManagePosition()
          {
             tp1Hit = true;
             Print("TP1 hit - closed ", volClose, " lots at ", bid);
-            
-            // Move SL to break-even if enabled
-            if(UseBreakEven && entryPrice > 0)
-            {
-               double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-               double newSL = entryPrice + BreakEvenBuffer * point;
-               
-               // Only modify if newSL is above current SL
-               if(newSL > posSL)
-               {
-                  if(trade.PositionModify(_Symbol, newSL, posTP))
-                  {
-                     Print("Break-Even activated: SL moved to ", newSL);
-                  }
-               }
-            }
+         }
+      }
+   }
+
+   // Break-Even management (retry on every tick after TP1, avoids one-shot invalid-stops failure)
+   if(UseBreakEven && tp1Hit && entryPrice > 0)
+   {
+      double beTarget = entryPrice + BreakEvenBuffer * point;
+      // broker rule for BUY SL: must be <= bid - minStopDist
+      double maxAllowedSL = bid - minStopDist;
+      double newSL = MathMin(beTarget, maxAllowedSL);
+      newSL = NormalizeDouble(newSL, digits);
+
+      // move only forward
+      if(newSL > posSL + point)
+      {
+         if(trade.PositionModify(_Symbol, newSL, posTP))
+         {
+            Print("Break-Even activated/updated: SL moved to ", newSL);
+         }
+         else
+         {
+            Print("Break-Even modify failed, will retry. err=", GetLastError(),
+                  " | bid=", bid, " | minStopDist=", minStopDist,
+                  " | reqSL=", newSL, " | curSL=", posSL);
          }
       }
    }
@@ -256,8 +267,10 @@ void ManagePosition()
       {
          double trailDist = atr * TrailATR_Multiple;
          double newSL = bid - trailDist;
+         newSL = MathMin(newSL, bid - minStopDist);
+         newSL = NormalizeDouble(newSL, digits);
          
-         if(newSL > posSL && newSL < bid)
+         if(newSL > posSL + point)
          {
             trade.PositionModify(_Symbol, newSL, posTP);
          }
