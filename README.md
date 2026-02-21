@@ -1,79 +1,126 @@
-# fib-pullback-ea
+# Fib Pullback EA v2.0
 
-Langweilig & robustes MVP (Option A): **H1, Single-Symbol**, Trend + Fibonacci Pullback.
+**Optimized** Fibonacci pullback strategy for H1 timeframe with ATR-normalized filters.
 
-## Strategie v1
+## Performance (Backtest 2016-2026, EURUSD + USDCAD)
 
-**Trendfilter**
-- Long nur wenn `Close > EMA200`
-- (Short später; v1 nur Long, um es sauber zu validieren)
+| Mode | Trades | Total R | Win Rate | Avg R/Trade |
+|------|--------|---------|----------|-------------|
+| **Max R** | 555 | +189.78 | 85.8% | +0.342 |
+| **Quality** | 306 | +123.02 | 92.5% | +0.402 |
 
-**Swing-Definition (deterministisch)**
-- Lookback `L=20` (H1 Bars)
-- `swing_low = lowest low der letzten L Bars`
-- `swing_high = highest high seit diesem swing_low bis zum letzten abgeschlossenen Bar`
+## Key Features (v2.0)
 
-**Fib-Levels (Bull swing: low→high)**
+- **ATR(20) normalized filters** - Symbol-agnostic thresholds
+- **Two strategy modes**: Max R (more trades) vs Quality (high WR)
+- **Break-Even after TP1** - Eliminates risk after partial profit
+- **Optional trailing stop** - ATR-based trailing
+- **Symbol restriction** - Optimized for EURUSD + USDCAD
+
+## Strategy Overview
+
+**Trend Filter**
+- Long only when `Close > EMA200`
+
+**Swing Definition (deterministic)**
+- Lookback `L=20` (H1 bars)
+- `swing_low = lowest low of last L bars`
+- `swing_high = highest high from swing_low to last closed bar`
+
+**Fib Levels (Bull swing: low→high)**
 - `fib_382 = high - 0.382*(high-low)`
 - `fib_618 = high - 0.618*(high-low)`
 
-**Entry (Zone 38.2–61.8%)**
-- Preis war in der Zone: `Low <= fib_618`
+**Entry Conditions (Zone 38.2–61.8%)**
+- Price was in zone: `Low <= fib_618`
 - Confirmation: `Close > fib_382`
-- Optional Filter: `Close > EMA50` (im Code als Schalter)
 
-**Stoploss (SL = A)**
-- `SL = swing_low`
+**ATR-Normalized Filters (v2.0)**
 
-**Take Profit (TP = B)**
-- TP1: 50% Position bei `swing_high` (100%)
-- TP2: Rest bei `ext_1618 = high + 0.618*(high-low)`
+| Filter | Max R Mode | Quality Mode |
+|--------|------------|--------------|
+| risk_atr | 0.7 - 2.0 | 0.7 - 2.0 |
+| confirm_atr | >= 0.1 | >= 0.25 |
+| depth_atr | >= 0.1 | >= 0.1 |
+| swing_range_atr | - | <= 2.0 |
 
-## Repo-Struktur
+**Exit Logic**
+- SL = swing_low
+- TP1: 50% at swing_high (partial close)
+- TP2: Rest at 161.8% extension
+- **Break-Even**: After TP1 hit, SL → Entry price
 
-- `python/` — einfacher Backtest (ohne externe Dependencies)
-- `mql5/` — Expert Advisor (EA) für MetaTrader 5
+## Files
+
+- `python/backtest.py` — H1 bar-based backtest with feature logging
+- `python/walkforward.py` — Walk-forward filter optimization
+- `python/patterns.py` — Feature bucketing analysis
+- `python/sensitivity.py` — Model comparison reports
+- `mql5/FibPullbackEA.mq5` — Expert Advisor for MetaTrader 5
 
 ## Python Backtest
 
-### 1) Daten exportieren (aus MT5)
+### 1) Export data from MT5
 
-Empfohlen: **EURUSD, H1**.
+Recommended: **EURUSD, USDCAD, H1**.
 
-In MT5:
-- Symbol öffnen → History Center / Export
-- CSV mit Spalten: `time,open,high,low,close,volume`
-  - `time` in ISO (`YYYY-MM-DD HH:MM`) oder Unix timestamp (Sekunden)
+MT5 Export format: Tab-separated CSV with headers like `<DATE> <TIME> <OPEN> <HIGH> <LOW> <CLOSE> ...`
 
-Lege die Datei ab als:
-- `data/EURUSD_H1.csv`
-
-### 2) Backtest laufen lassen
+### 2) Run backtest
 
 ```bash
-python3 python/backtest.py --csv data/EURUSD_H1.csv --symbol EURUSD
+python3 python/backtest.py --csv data/EURUSD_H1.csv --symbol EURUSD --intrabar ohlc --out out_eurusd
 ```
 
-Outputs:
-- Trades als CSV in `out/trades.csv`
-- Summary im Terminal
+Output: `out_eurusd/trades.csv` with all features (ATR, StdDev, etc.)
+
+### 3) Walk-forward optimization
+
+```bash
+python3 python/walkforward.py --trades out/trades_all.csv --atr 20 --out wf_results.csv
+```
 
 ## MQL5 EA
 
-Datei:
-- `mql5/FibPullbackEA.mq5`
+**File:** `mql5/FibPullbackEA.mq5`
 
-Inputs:
-- `LookbackBars` (default 20)
-- `EMA200Period` (200)
-- `EMA50Filter` (on/off)
-- `RiskPercent` (position sizing)
+### Key Inputs
 
-Du kannst den EA im Strategy Tester gegen EURUSD H1 laufen lassen.
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| StrategyMode | MAX_R / QUALITY / CUSTOM | MAX_R |
+| ATRPeriod | ATR period for filters | 20 |
+| RiskPercent | % equity per trade | 0.5 |
+| UseBreakEven | Move SL to entry after TP1 | true |
+| UseTrailingStop | ATR trailing (optional) | false |
+| RestrictSymbols | Only EURUSD/USDCAD | false |
 
-## TODO / Nächste Schritte
+### Testing in MT5
 
-- Short-Regeln spiegeln
-- Multi-Symbol (Symbol-Loop)
-- Slippage/Spread Modellierung in Python
-- Walk-forward / Out-of-sample
+1. Open Strategy Tester
+2. Select FibPullbackEA
+3. Symbol: EURUSD or USDCAD
+4. Period: H1
+5. Mode: Every tick (or OHLC on M1 for speed)
+6. Run and compare to Python backtest
+
+## Changelog
+
+### v2.0 (2026-02-21)
+- Added ATR(20) normalized filters
+- Two strategy modes (Max R vs Quality)
+- Break-Even after TP1
+- Optional trailing stop
+- Symbol restriction option
+- Comprehensive feature logging in Python
+
+### v1.0 (2026-02-20)
+- Initial MVP with basic fib pullback logic
+- Fixed TP1/TP2 levels
+- Simple EMA200 trend filter
+
+## Development Notes
+
+See `ATR_NORMALIZATION_METHODOLOGY.md` for filter design rationale.
+
+Backtest artifacts in `out_*` directories (gitignored).

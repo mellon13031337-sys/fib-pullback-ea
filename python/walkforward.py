@@ -71,10 +71,16 @@ def read_rows(path: str, atr_kind: str) -> list[Row]:
     p = Path(path)
     out: list[Row] = []
 
-    col_risk = f"risk_atr{atr_kind}"
-    col_conf = f"confirm_atr{atr_kind}"
-    col_depth = f"zone_depth_atr{atr_kind}"
-    col_swing = f"swing_range_atr{atr_kind}"
+    if atr_kind == "stddev20":
+        col_risk = "risk_stddev20"
+        col_conf = "confirm_stddev20"
+        col_depth = "zone_depth_stddev20"
+        col_swing = "swing_range_stddev20"
+    else:
+        col_risk = f"risk_atr{atr_kind}"
+        col_conf = f"confirm_atr{atr_kind}"
+        col_depth = f"zone_depth_atr{atr_kind}"
+        col_swing = f"swing_range_atr{atr_kind}"
 
     with p.open() as f:
         r = csv.DictReader(f)
@@ -129,16 +135,28 @@ def eval_filter(rows: list[Row], filt: Callable[[Row], bool], start: dt.datetime
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--trades", required=True, help="combined trades.csv")
-    ap.add_argument("--atr", choices=["14", "20"], default="14")
+    ap.add_argument("--atr", choices=["14", "20", "stddev20"], default="14")
     ap.add_argument("--out", default="walkforward_rank.csv")
     ap.add_argument("--min_trades", type=int, default=200, help="min IS trades")
+    ap.add_argument("--is_start", help="IS start (YYYY-MM-DD)")
+    ap.add_argument("--is_end", help="IS end (YYYY-MM-DD)")
+    ap.add_argument("--oos_start", help="OOS start (YYYY-MM-DD)")
+    ap.add_argument("--oos_end", help="OOS end (YYYY-MM-DD)")
+    ap.add_argument("--val_start", help="VAL start (YYYY-MM-DD)")
+    ap.add_argument("--val_end", help="VAL end (YYYY-MM-DD)")
     args = ap.parse_args()
 
     rows = read_rows(args.trades, args.atr)
 
-    IS = (dt.datetime(2023, 1, 1), dt.datetime(2024, 6, 30, 23, 59, 59))
-    OOS = (dt.datetime(2024, 7, 1), dt.datetime(2024, 12, 31, 23, 59, 59))
-    VAL = (dt.datetime(2025, 1, 1), dt.datetime(2026, 12, 31, 23, 59, 59))
+    # default splits (2023-2026 for recent data)
+    if args.is_start:
+        IS = (dt.datetime.fromisoformat(args.is_start), dt.datetime.fromisoformat(args.is_end + " 23:59:59"))
+        OOS = (dt.datetime.fromisoformat(args.oos_start), dt.datetime.fromisoformat(args.oos_end + " 23:59:59"))
+        VAL = (dt.datetime.fromisoformat(args.val_start), dt.datetime.fromisoformat(args.val_end + " 23:59:59"))
+    else:
+        IS = (dt.datetime(2023, 1, 1), dt.datetime(2024, 6, 30, 23, 59, 59))
+        OOS = (dt.datetime(2024, 7, 1), dt.datetime(2024, 12, 31, 23, 59, 59))
+        VAL = (dt.datetime(2025, 1, 1), dt.datetime(2026, 12, 31, 23, 59, 59))
 
     # small grid (adjustable)
     risk_mins = [None, 0.3, 0.5, 0.7]

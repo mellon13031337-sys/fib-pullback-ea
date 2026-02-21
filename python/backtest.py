@@ -162,6 +162,21 @@ def atr(bars: list[Bar], period: int = 14) -> list[Optional[float]]:
     return out
 
 
+def stddev(values: list[float], period: int) -> list[Optional[float]]:
+    """Rolling Standard Deviation."""
+    out: list[Optional[float]] = [None] * len(values)
+    if period <= 0 or len(values) < period:
+        return out
+    
+    for i in range(period - 1, len(values)):
+        window = values[i - period + 1 : i + 1]
+        mean = sum(window) / period
+        variance = sum((x - mean) ** 2 for x in window) / period
+        out[i] = variance ** 0.5
+    
+    return out
+
+
 def lowest_low(bars: list[Bar], start: int, end: int) -> tuple[float, int]:
     # inclusive start, inclusive end
     lo = float("inf")
@@ -208,6 +223,7 @@ class Trade:
     ema50: Optional[float] = None
     atr14: Optional[float] = None
     atr20: Optional[float] = None
+    stddev20: Optional[float] = None
 
 
 def main() -> None:
@@ -232,6 +248,7 @@ def main() -> None:
     ema50 = ema(closes, 50)
     atr14 = atr(bars, 14)
     atr20 = atr(bars, 20)
+    stddev20 = stddev(closes, 20)
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -389,6 +406,7 @@ def main() -> None:
             ema50=float(ema50[i]) if ema50[i] is not None else None,
             atr14=atr14[i] if i < len(atr14) else None,
             atr20=atr20[i] if i < len(atr20) else None,
+            stddev20=stddev20[i] if i < len(stddev20) else None,
         )
 
     # If position is still open at end of data, close it at the last bar close.
@@ -442,6 +460,12 @@ def main() -> None:
             "zone_depth_atr20",
             "swing_range_atr14",
             "swing_range_atr20",
+            # StdDev features
+            "stddev20",
+            "risk_stddev20",
+            "confirm_stddev20",
+            "zone_depth_stddev20",
+            "swing_range_stddev20",
         ])
         for t in trades:
             # optional features may not exist for older rows; compute what we can.
@@ -460,6 +484,7 @@ def main() -> None:
 
             atr14_v = getattr(t, "atr14", None)
             atr20_v = getattr(t, "atr20", None)
+            stddev20_v = getattr(t, "stddev20", None)
             swing_range = (swing_hi - swing_lo) if (swing_hi is not None and swing_lo is not None) else None
 
             def div(a: Optional[float], b: Optional[float]) -> Optional[float]:
@@ -499,6 +524,12 @@ def main() -> None:
                 f"{div(zone_depth, atr20_v):.6f}" if div(zone_depth, atr20_v) is not None else "",
                 f"{div(swing_range, atr14_v):.6f}" if div(swing_range, atr14_v) is not None else "",
                 f"{div(swing_range, atr20_v):.6f}" if div(swing_range, atr20_v) is not None else "",
+                # StdDev features
+                f"{stddev20_v:.6f}" if stddev20_v is not None else "",
+                f"{div(risk, stddev20_v):.6f}" if div(risk, stddev20_v) is not None else "",
+                f"{div(confirm_strength, stddev20_v):.6f}" if div(confirm_strength, stddev20_v) is not None else "",
+                f"{div(zone_depth, stddev20_v):.6f}" if div(zone_depth, stddev20_v) is not None else "",
+                f"{div(swing_range, stddev20_v):.6f}" if div(swing_range, stddev20_v) is not None else "",
             ])
 
     # summary
