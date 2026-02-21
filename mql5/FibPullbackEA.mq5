@@ -41,6 +41,7 @@ input double RiskATR_Max    = 2.0;          // Max risk/ATR (filter too-wide sto
 input double ConfirmATR_Min = 0.1;          // Min confirm_strength/ATR
 input double DepthATR_Min   = 0.1;          // Min zone_depth/ATR
 input double SwingRangeATR_Max = 99.0;      // Max swing_range/ATR (99 = no limit)
+input double MinR_TP1 = 0.15;               // Minimum R to TP1 (skip if TP1 too close/below entry)
 
 //--- Symbol restriction
 input bool   RestrictSymbols = false;       // Only trade EURUSD & USDCAD
@@ -370,6 +371,16 @@ void OnTick()
       double tp1 = swingHigh;
       double tp2 = swingHigh + 0.618 * (swingHigh - swingLow);
 
+      // Real-market guard: skip if TP1 is too close (or below) entry due spread/gap
+      double riskReal = ask - sl;
+      if(riskReal <= 0) return;
+      double r_tp1 = (tp1 - ask) / riskReal;
+      if(r_tp1 < MinR_TP1)
+      {
+         // Print("Skip entry: TP1 too close. r_tp1=", DoubleToString(r_tp1, 3));
+         return;
+      }
+
       double lots = CalcLotsFromRisk(ask, sl);
       if(lots <= 0) return;
 
@@ -381,7 +392,8 @@ void OnTick()
                " | SL=", sl, " | TP1=", tp1, " | TP2=", tp2,
                " | Mode=", EnumToString(StrategyMode),
                " | risk_atr=", DoubleToString(risk_atr, 2),
-               " | confirm_atr=", DoubleToString(confirm_atr, 2));
+               " | confirm_atr=", DoubleToString(confirm_atr, 2),
+               " | r_tp1=", DoubleToString(r_tp1, 2));
       }
    }
 }
